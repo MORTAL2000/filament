@@ -31,7 +31,7 @@ struct PassNode;
 
 class ResourceEntryBase : public VirtualResource {
 public:
-    explicit ResourceEntryBase(const char* name, uint16_t id, bool imported) noexcept;
+    explicit ResourceEntryBase(const char* name, uint16_t id, bool imported, uint8_t priority) noexcept;
     ResourceEntryBase(ResourceEntryBase const&) = default;
     ~ResourceEntryBase() override;
 
@@ -47,6 +47,7 @@ public:
     const char* const name;
     const uint16_t id;                      // for debugging and graphing
     const bool imported;
+    const uint8_t priority;
 
     // updated by builder
     uint8_t version = 0;
@@ -68,12 +69,13 @@ public:
     using Descriptor = typename T::Descriptor;
     Descriptor descriptor;
 
-    ResourceEntry(const char* name, Descriptor const& desc, uint16_t id) noexcept
-        : ResourceEntryBase(name, id, false), descriptor(desc) {
+    ResourceEntry(const char* name, Descriptor const& desc, uint16_t id, uint8_t priority) noexcept
+            : ResourceEntryBase(name, id, false, priority), descriptor(desc) {
     }
 
-    ResourceEntry(const char* name, Descriptor const& desc, const T& r, uint16_t id) noexcept
-            : ResourceEntryBase(name, id, true), resource(r), descriptor(desc) {
+    ResourceEntry(const char* name, Descriptor const& desc, const T& r, uint16_t id,
+            uint8_t priority) noexcept
+            : ResourceEntryBase(name, id, true, priority), resource(r), descriptor(desc) {
     }
 
     T const& getResource() const noexcept { return resource; }

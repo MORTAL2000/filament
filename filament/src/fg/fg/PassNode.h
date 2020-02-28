@@ -49,8 +49,8 @@ struct PassNode { // 200
     ~PassNode() = default;
 
     // for Builder
-    void declareRenderTarget(fg::RenderTarget& renderTarget) noexcept {
-        renderTargets.push_back(renderTarget.index);
+    void declareRenderTarget(FrameGraph& fg, FrameGraphId<FrameGraphRenderTarget> handle) noexcept {
+        renderTargets.push_back(handle);
     }
 
     FrameGraphHandle read(FrameGraph& fg, FrameGraphHandle handle) {
@@ -138,7 +138,7 @@ struct PassNode { // 200
     Vector<FrameGraphHandle> reads;                     // resources we're reading from
     Vector<FrameGraphHandle> writes;                    // resources we're writing to
     Vector<FrameGraphId<FrameGraphTexture>> samples;    // resources we're sampling from
-    Vector<uint16_t> renderTargets;
+    Vector<FrameGraphId<FrameGraphRenderTarget>> renderTargets;
 
     // computed during compile()
     Vector<VirtualResource*> devirtualize;         // resources we need to create before executing

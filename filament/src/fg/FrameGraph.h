@@ -23,6 +23,7 @@
 #include "FrameGraphHandle.h"
 
 #include <fg/fg/ResourceEntry.h>
+#include <fg/fg/RenderTargetResourceEntry.h>
 
 #include "details/Allocators.h"
 
@@ -52,7 +53,6 @@ class FEngine;
 namespace fg {
 struct ResourceNode;
 struct RenderTarget;
-struct RenderTargetResource;
 struct PassNode;
 struct Alias;
 class ResourceAllocatorInterface;
@@ -76,10 +76,20 @@ public:
             return mFrameGraph.create<T>(name, desc);
         }
 
+        template<>
+        FrameGraphId<FrameGraphRenderTarget> create(const char* name,
+                typename FrameGraphRenderTarget::Descriptor const& desc) noexcept;
+
         // Helper to create a Texture resource
         FrameGraphId<FrameGraphTexture> createTexture(const char* name,
                 FrameGraphTexture::Descriptor const& desc = {}) noexcept {
             return create<FrameGraphTexture>(name, desc);
+        }
+
+        // Helper to create a RenderTarget resource
+        FrameGraphId<FrameGraphRenderTarget> createRenderTarget(const char* name,
+                FrameGraphRenderTarget::Descriptor const& desc) noexcept {
+            return create<FrameGraphRenderTarget>(name, desc);
         }
 
         // Read from a resource (i.e. add a reference to that resource)
@@ -96,16 +106,6 @@ public:
         [[nodiscard]] FrameGraphId<T> write(FrameGraphId<T> output) {
             return FrameGraphId<T>(write(FrameGraphHandle(output)));
         }
-
-        // create a render target in this pass.
-        // read/write must have been called as appropriate before this.
-        FrameGraphRenderTargetHandle createRenderTarget(const char* name,
-                FrameGraphRenderTarget::Descriptor const& desc,
-                backend::TargetBufferFlags clearFlags = {}) noexcept;
-
-        // helper for single color attachment with WRITE access
-        FrameGraphRenderTargetHandle createRenderTarget(FrameGraphId<FrameGraphTexture>& texture,
-                backend::TargetBufferFlags clearFlags = {}) noexcept;
 
         // Declare that this pass has side effects outside the framegraph (i.e. it can't be culled)
         // Calling write() on an imported resource automatically adds a side-effect.
@@ -127,10 +127,6 @@ public:
 
         // returns whether this texture resource is an attachment to some rendertarget
         bool isAttachment(FrameGraphId<FrameGraphTexture> r) const noexcept;
-
-        // returns the descriptor of the render target this attachment belongs to
-        FrameGraphRenderTarget::Descriptor& getRenderTargetDescriptor(
-                FrameGraphRenderTargetHandle handle);
 
     private:
         friend class FrameGraph;
@@ -206,19 +202,6 @@ public:
         return entry.descriptor;
     }
 
-    // Return the FrameGraphRenderTarget Descriptor associated to this resource handle.
-    // The handle must be valid.
-    FrameGraphRenderTarget::Descriptor const& getDescriptor(
-            FrameGraphRenderTargetHandle handle) const noexcept;
-
-    // Import a write-only render target from outside the framegraph and returns a handle to it.
-    FrameGraphRenderTargetHandle importRenderTarget(const char* name,
-            FrameGraphRenderTarget::Descriptor descriptor,
-            backend::Handle<backend::HwRenderTarget> target, uint32_t width, uint32_t height,
-            backend::TargetBufferFlags discardStart = backend::TargetBufferFlags::NONE,
-            backend::TargetBufferFlags discardEnd = backend::TargetBufferFlags::NONE);
-
-
     template<typename T>
     FrameGraphId<T> import(const char* name,
             typename T::Descriptor const& desc, const T& resource) noexcept {
@@ -266,7 +249,7 @@ private:
     friend struct FrameGraphTexture;
     friend struct fg::PassNode;
     friend struct fg::RenderTarget;
-    friend struct fg::RenderTargetResource;
+    friend struct fg::RenderTargetResourceEntry;
 
     template <typename T>
     struct Deleter {
@@ -283,13 +266,7 @@ private:
 
     fg::PassNode& createPass(const char* name, FrameGraphPassExecutor* base) noexcept;
 
-    fg::RenderTarget& createRenderTarget(const char* name,
-            FrameGraphRenderTarget::Descriptor const& desc) noexcept;
-
     FrameGraphHandle createResourceNode(fg::ResourceEntryBase* resource) noexcept;
-
-    bool computeDiscard(const Vector<FrameGraphHandle> fg::PassNode::* list,
-            fg::PassNode const* curr, fg::PassNode const* first, FrameGraphHandle resource);
 
     bool equals(FrameGraphRenderTarget::Descriptor const& cacheEntry,
             FrameGraphRenderTarget::Descriptor const& rt) const noexcept;
@@ -305,8 +282,16 @@ private:
 
     template<typename T>
     FrameGraphId<T> create(const char* name, typename T::Descriptor const& desc) noexcept {
-        fg::ResourceEntryBase* pBase = mArena.make<fg::ResourceEntry<T>>(name, desc, mId++);
+        fg::ResourceEntryBase* pBase = mArena.make<fg::ResourceEntry<T>>(name, desc, mId++, 0);
         FrameGraphId<T> r(create(pBase));
+        return r;
+    }
+
+    template<>
+    FrameGraphId<FrameGraphRenderTarget> create(const char* name,
+            typename FrameGraphRenderTarget::Descriptor const& desc) noexcept {
+        fg::ResourceEntryBase* pBase = mArena.make<fg::RenderTargetResourceEntry>(name, desc, mId++, 1);
+        FrameGraphId<FrameGraphRenderTarget> r(create(pBase));
         return r;
     }
 
@@ -333,10 +318,8 @@ private:
     details::LinearAllocatorArena mArena;
     Vector<fg::PassNode> mPassNodes;                    // list of frame graph passes
     Vector<fg::ResourceNode> mResourceNodes;            // list of resource nodes
-    Vector<fg::RenderTarget> mRenderTargets;            // list of rendertarget
     Vector<fg::Alias> mAliases;                         // list of aliases
     Vector<UniquePtr<fg::ResourceEntryBase>> mResourceEntries;
-    Vector<UniquePtr<fg::RenderTargetResource>> mRenderTargetCache; // list of actual rendertargets
     uint16_t mId = 0;
 };
 

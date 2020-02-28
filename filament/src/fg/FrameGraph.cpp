@@ -72,30 +72,12 @@ bool FrameGraph::Builder::isAttachment(FrameGraphId<FrameGraphTexture> r) const 
             TextureUsage::STENCIL_ATTACHMENT));
 }
 
-FrameGraphRenderTarget::Descriptor&
-FrameGraph::Builder::getRenderTargetDescriptor(FrameGraphRenderTargetHandle handle) {
-    FrameGraph& fg = mFrameGraph;
-    assert(handle < fg.mRenderTargets.size());
-    return fg.mRenderTargets[handle].desc;
-}
-
-FrameGraphRenderTargetHandle FrameGraph::Builder::createRenderTarget(const char* name,
-        FrameGraphRenderTarget::Descriptor const& desc, TargetBufferFlags clearFlags) noexcept {
-    // TODO: add support for cubemaps and arrays
-    // TODO: enforce that we can't have a resource used in 2 rendertarget in the same pass
-    FrameGraph& fg = mFrameGraph;
-    fg::RenderTarget& renderTarget = fg.createRenderTarget(name, desc);
-    renderTarget.userClearFlags = clearFlags;
-    mPass.declareRenderTarget(renderTarget);
-    return FrameGraphRenderTargetHandle(renderTarget.index);
-}
-
-FrameGraphRenderTargetHandle FrameGraph::Builder::createRenderTarget(FrameGraphId<FrameGraphTexture>& texture,
-        TargetBufferFlags clearFlags) noexcept {
-    texture = this->write(texture);
-    FrameGraphRenderTarget::Descriptor desc;
-    desc.attachments.color = texture;
-    return createRenderTarget(getName(texture), desc, clearFlags);
+template<>
+FrameGraphId<FrameGraphRenderTarget> FrameGraph::Builder::create(const char* name,
+        FrameGraphRenderTarget::Descriptor const& desc) noexcept {
+    auto handle =  mFrameGraph.create<FrameGraphRenderTarget>(name, desc);
+    mPass.declareRenderTarget(mFrameGraph, handle); // FIXME: this should be explicit
+    return handle;
 }
 
 FrameGraphHandle FrameGraph::Builder::read(FrameGraphHandle input) {
@@ -122,10 +104,8 @@ FrameGraph::FrameGraph(fg::ResourceAllocatorInterface& resourceAllocator)
           mArena("FrameGraph Arena", 65536), // TODO: the Area will eventually come from outside
           mPassNodes(mArena),
           mResourceNodes(mArena),
-          mRenderTargets(mArena),
           mAliases(mArena),
-          mResourceEntries(mArena),
-          mRenderTargetCache(mArena) {
+          mResourceEntries(mArena) {
 //    slog.d << "PassNode: " << sizeof(PassNode) << io::endl;
 //    slog.d << "ResourceNode: " << sizeof(ResourceNode) << io::endl;
 //    slog.d << "Resource: " << sizeof(Resource) << io::endl;
@@ -192,14 +172,6 @@ PassNode& FrameGraph::createPass(const char* name, FrameGraphPassExecutor* base)
     return frameGraphPasses.back();
 }
 
-fg::RenderTarget& FrameGraph::createRenderTarget(const char* name,
-        FrameGraphRenderTarget::Descriptor const& desc) noexcept {
-    auto& renderTargets = mRenderTargets;
-    const uint16_t id = (uint16_t)renderTargets.size();
-    renderTargets.emplace_back(name, desc, id);
-    return renderTargets.back();
-}
-
 FrameGraphHandle FrameGraph::create(fg::ResourceEntryBase* pResourceEntry) noexcept {
     mResourceEntries.emplace_back(pResourceEntry, *this);
     return createResourceNode(pResourceEntry);
@@ -237,12 +209,6 @@ fg::ResourceEntryBase& FrameGraph::getResourceEntryBaseUnchecked(FrameGraphHandl
     ResourceNode& node = getResourceNodeUnchecked(r);
     assert(node.resource);
     return *node.resource;
-}
-
-FrameGraphRenderTarget::Descriptor const& FrameGraph::getDescriptor(
-        FrameGraphRenderTargetHandle handle) const noexcept {
-    assert(handle < mRenderTargets.size());
-    return mRenderTargets[handle].desc;
 }
 
 bool FrameGraph::equals(FrameGraphRenderTarget::Descriptor const& cacheEntry,
@@ -285,61 +251,10 @@ bool FrameGraph::equals(FrameGraphRenderTarget::Descriptor const& cacheEntry,
             }) && samplesMatch;
 }
 
-FrameGraphRenderTargetHandle FrameGraph::importRenderTarget(const char* name,
-        FrameGraphRenderTarget::Descriptor descriptor,
-        backend::Handle<backend::HwRenderTarget> target, uint32_t width, uint32_t height,
-        TargetBufferFlags discardStart, TargetBufferFlags discardEnd) {
-
-    // Imported render target can't specify textures -- it's meaningless
-    assert(std::all_of(
-            descriptor.attachments.textures.begin(), descriptor.attachments.textures.end(),
-            [](FrameGraphHandle t) { return !t.isValid(); }));
-
-    // create a fake imported attachment for this render target,
-    // so we can do a moveResource() for instance.
-    FrameGraphTexture::Descriptor desc{
-            .width = width, .height = height, .usage = TextureUsage::COLOR_ATTACHMENT };
-    descriptor.attachments.color = import<FrameGraphTexture>(name, desc, {});
-
-    // create a fg::RenderTarget, so we can get an handle
-    fg::RenderTarget& renderTarget = createRenderTarget(name, descriptor);
-
-    // And pre-populate the cache with the concrete render target
-    RenderTargetResource* pRenderTargetResource = mArena.make<RenderTargetResource>(name,
-            descriptor, true,TargetBufferFlags::COLOR, width, height, TextureFormat{});
-    pRenderTargetResource->targetInfo.target = target;
-    pRenderTargetResource->discardStart = discardStart;
-    pRenderTargetResource->discardEnd = discardEnd;
-    mRenderTargetCache.emplace_back(pRenderTargetResource, *this);
-
-    return FrameGraphRenderTargetHandle(renderTarget.index);
-}
-
-bool FrameGraph::computeDiscard(const Vector<FrameGraphHandle> fg::PassNode::* list,
-        PassNode const* curr, PassNode const* first, FrameGraphHandle attachment) {
-    auto& resourceNodes = mResourceNodes;
-    while (curr != first) {
-        PassNode const& pass = *curr++;
-        // TODO: maybe find a more efficient way of figuring this out
-        // for each resource written or read...
-        for (FrameGraphHandle cur : pass.*list) {
-            // for all possible attachments of our renderTarget...
-            ResourceEntryBase const* const pResource = resourceNodes[cur.index].resource;
-            if (attachment.isValid() && resourceNodes[attachment.index].resource == pResource) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-
 FrameGraph& FrameGraph::compile() noexcept {
     Vector<fg::PassNode>& passNodes = mPassNodes;
-    Vector<fg::RenderTarget>& renderTargets = mRenderTargets;
     Vector<ResourceNode>& resourceNodes = mResourceNodes;
     Vector<UniquePtr<fg::ResourceEntryBase>>& resourceRegistry = mResourceEntries;
-    Vector<UniquePtr<RenderTargetResource>>& renderTargetCache = mRenderTargetCache;
 
     /*
      * remap aliased resources
@@ -355,39 +270,6 @@ FrameGraph& FrameGraph::compile() noexcept {
             for (ResourceNode& cur : resourceNodes) {
                 if (cur.resource == to.resource) {
                     cur.resource = from.resource;
-                }
-            }
-
-            // TODO: make this better
-            //  When replacing a resource from an imported render-target, we find all existing
-            //  render-target that used that resource as the color attachment, and we clear
-            //  all other attachments -- we have to do this because the resource aliasing
-            //  must also alias the render targets.
-            //  For instance, if a render-target was declared with a color+depth attachment,
-            //  and the color attachment was aliased with an imported render-target, the
-            //  render-target cache (see: equals()) wouldn't match it (because the depth
-            //  attachment would be missing).
-            for (fg::RenderTarget& rt : renderTargets) {
-                auto& textures = rt.desc.attachments.textures;
-                FrameGraphHandle handle = textures[0];
-                if (handle.isValid()) {
-                    ResourceNode const& node = resourceNodes[handle.index];
-                    if (node.resource->imported && node.resource == from.resource) {
-                        for (size_t i = 1; i < textures.size(); ++i) {
-                            // FIXME: here we're likely leaking the resources we're clearing,
-                            //  however, we can't know for sure because currently RenderTargets
-                            //  don't hold references to their attachment (Passes do). We can't
-                            //  go back to the passes to clear the reference because we can't know
-                            //  for sure that the pass doesn't need the resource (i.e. we don't
-                            //  know if it did a read() or write() for the purpose of the
-                            //  RT attachment or something else).
-                            //  To fix this, we need the RT to hold references to attachments,
-                            //  and Passes to RTs. This way passes wouldn't have to add references
-                            //  to attachments, and clearing attachments would release their
-                            //  resources.
-                            textures[i] = {};
-                        }
-                    }
                 }
             }
 
@@ -487,15 +369,6 @@ FrameGraph& FrameGraph::compile() noexcept {
         }
     }
 
-    // resolve render targets
-    for (PassNode& pass : passNodes) {
-        if (pass.refCount) {
-            for (auto i : pass.renderTargets) {
-                renderTargets[i].resolve(*this);
-            }
-        }
-    }
-
     /*
      * compute first/last users for active passes
      */
@@ -519,8 +392,8 @@ FrameGraph& FrameGraph::compile() noexcept {
             // figure out which is the last pass to need this resource
             pResource->last = &pass;
         }
-        for (auto i : pass.renderTargets) {
-            VirtualResource* const pResource = renderTargets[i].cache;
+        for (FrameGraphHandle resource : pass.renderTargets) {
+            VirtualResource* const pResource = resourceNodes[resource.index].resource;
             // figure out which is the first pass to need this resource
             pResource->first = pResource->first ? pResource->first : &pass;
             // figure out which is the last pass to need this resource
@@ -529,22 +402,16 @@ FrameGraph& FrameGraph::compile() noexcept {
     }
 
     // add resource to de-virtualize or destroy to the corresponding list for each active pass
-    for (UniquePtr<fg::ResourceEntryBase> const& resource : resourceRegistry) {
-        if (resource->refs) {
-            assert(!resource->first == !resource->last);
-            if (resource->first && resource->last) {
-                resource->first->devirtualize.push_back(resource.get());
-                resource->last->destroy.push_back(resource.get());
+    // but add them in priority order (this is so that rendertargets are added after textures)
+    for (size_t priority = 0; priority < 2; priority++) {
+        for (UniquePtr<fg::ResourceEntryBase> const& resource : resourceRegistry) {
+            if (resource->priority == priority && resource->refs) {
+                assert(!resource->first == !resource->last);
+                if (resource->first && resource->last) {
+                    resource->first->devirtualize.push_back(resource.get());
+                    resource->last->destroy.push_back(resource.get());
+                }
             }
-        }
-    }
-
-    // *THEN* add the virtual rendertargets
-    for (UniquePtr<RenderTargetResource> const& entry : renderTargetCache) {
-        assert(!entry->first == !entry->last);
-        if (entry->first && entry->last) {
-            entry->first->devirtualize.push_back(entry.get());
-            entry->last->destroy.push_back(entry.get());
         }
     }
 
@@ -580,7 +447,6 @@ void FrameGraph::reset() noexcept {
     mResourceNodes.clear();
     mResourceEntries.clear();
     mAliases.clear();
-    mRenderTargetCache.clear();
     mId = 0;
 }
 
