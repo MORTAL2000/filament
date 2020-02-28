@@ -45,27 +45,42 @@ TEST(FrameGraphTest, SimpleRenderPass) {
     };
 
     auto& renderPass = fg.addPass<RenderPassData>("Render",
-            [&](FrameGraph::Builder& builder, RenderPassData& data) {
-                FrameGraphTexture::Descriptor desc{
-                        .format = TextureFormat::RGBA16F
-                };
+            [&](FrameGraph::Builder& builder, auto& data) {
+                FrameGraphTexture::Descriptor desc{ .format = TextureFormat::RGBA16F };
                 data.output = builder.createTexture("color buffer", desc);
-                data.rt = builder.createRenderTarget(data.output);
+                data.output = builder.write(data.output);
+
+                data.rt = builder.createRenderTarget("color buffer", {
+                    .attachments = { data.output } });
+
+                data.rt = builder.read(data.rt);    // this shouldn't be needed
+                data.rt = builder.write(data.rt);
+
+                // rendertargets are weird...
+                // A) reading from an attachment is equivalent to reading from the RT
+                //    so any reads on any attachment should trigger a read on the RT,
+                //    meaning the RT can't be culled.
+                //    Or maybe, there should be a .use(RT) to declare it's going to be used
+                //    in that pass.
+                // B) writing to a RT, should propagate to its attachments, but then, how
+                //    is the new attachment value returned??
+                //    maybe it's a special type of write that doesn't change the version??
+                //    or maybe we require writes to be set on the resource.
+
+
                 EXPECT_TRUE(fg.isValid(data.output));
+                EXPECT_TRUE(fg.isValid(data.rt));
             },
             [=, &renderPassExecuted](
-                    FrameGraphPassResources const& resources,
-                    RenderPassData const& data,
-                    DriverApi& driver) {
+                    FrameGraphPassResources const& resources, auto const& data, DriverApi& driver) {
                 renderPassExecuted = true;
-                auto const& rt = resources.getRenderTarget(data.rt);
+                auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
                 EXPECT_EQ(TargetBufferFlags::COLOR, rt.params.flags.discardStart);
                 EXPECT_EQ(TargetBufferFlags::NONE, rt.params.flags.discardEnd);
-
             });
 
-    fg.present(renderPass.getData().output);
+    fg.present(renderPass.getData().output);    // TODO: this should trigger a read() on the RT
     fg.compile();
     fg.execute(driverApi);
 
@@ -111,7 +126,7 @@ TEST(FrameGraphTest, SimpleRenderPass2) {
                     RenderPassData const& data,
                     DriverApi& driver) {
                 renderPassExecuted = true;
-                auto const& rt = resources.getRenderTarget(data.rt);
+                auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
                 EXPECT_EQ(TargetBufferFlags::COLOR_AND_DEPTH, rt.params.flags.discardStart);
                 EXPECT_EQ(TargetBufferFlags::NONE, rt.params.flags.discardEnd);
@@ -156,7 +171,7 @@ TEST(FrameGraphTest, ScenarioDepthPrePass) {
                     DepthPrepassData const& data,
                     DriverApi& driver) {
                 depthPrepassExecuted = true;
-                auto const& rt = resources.getRenderTarget(data.rt);
+                auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
                 EXPECT_EQ(TargetBufferFlags::DEPTH, rt.params.flags.discardStart);
                 EXPECT_EQ(TargetBufferFlags::NONE, rt.params.flags.discardEnd);
@@ -193,7 +208,7 @@ TEST(FrameGraphTest, ScenarioDepthPrePass) {
                     ColorPassData const& data,
                     DriverApi& driver) {
                 colorPassExecuted = true;
-                auto const& rt = resources.getRenderTarget(data.rt);
+                auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
                 EXPECT_EQ(TargetBufferFlags::COLOR, rt.params.flags.discardStart);
                 EXPECT_EQ(TargetBufferFlags::DEPTH, rt.params.flags.discardEnd);
@@ -226,14 +241,16 @@ TEST(FrameGraphTest, SimplePassCulling) {
     auto& renderPass = fg.addPass<RenderPassData>("Render",
             [&](FrameGraph::Builder& builder, RenderPassData& data) {
                 data.output = builder.createTexture("renderTarget");
-                data.rt = builder.createRenderTarget(data.output);
+                data.rt = builder.createRenderTarget("renderTarget", {
+                        .attachments = { data.output }
+                });
             },
             [=, &renderPassExecuted](
                     FrameGraphPassResources const& resources,
                     RenderPassData const& data,
                     backend::DriverApi& driver) {
                 renderPassExecuted = true;
-                auto const& rt = resources.getRenderTarget(data.rt);
+                auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
                 EXPECT_EQ(TargetBufferFlags::COLOR, rt.params.flags.discardStart);
                 EXPECT_EQ(TargetBufferFlags::NONE, rt.params.flags.discardEnd);
@@ -250,14 +267,16 @@ TEST(FrameGraphTest, SimplePassCulling) {
             [&](FrameGraph::Builder& builder, PostProcessPassData& data) {
                 data.input = builder.sample(renderPass.getData().output);
                 data.output = builder.createTexture("postprocess-renderTarget");
-                data.rt = builder.createRenderTarget(data.output);
+                data.rt = builder.createRenderTarget("postprocess-renderTarget",{
+                    .attachments = { data.output }
+                });
             },
             [=, &postProcessPassExecuted](
                     FrameGraphPassResources const& resources,
                     PostProcessPassData const& data,
                     backend::DriverApi& driver) {
                 postProcessPassExecuted = true;
-                auto const& rt = resources.getRenderTarget(data.rt);
+                auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
                 EXPECT_EQ(TargetBufferFlags::COLOR, rt.params.flags.discardStart);
                 EXPECT_EQ(TargetBufferFlags::NONE, rt.params.flags.discardEnd);
@@ -274,7 +293,9 @@ TEST(FrameGraphTest, SimplePassCulling) {
             [&](FrameGraph::Builder& builder, CulledPassData& data) {
                 data.input = builder.sample(renderPass.getData().output);
                 data.output = builder.createTexture("unused-rendertarget");
-                data.rt = builder.createRenderTarget(data.output);
+                data.rt = builder.createRenderTarget("unused-rendertarget", {
+                        .attachments = { data.output }
+                });
             },
             [=, &culledPassExecuted](
                     FrameGraphPassResources const& resources,
@@ -350,7 +371,10 @@ TEST(FrameGraphTest, RenderTargetLifetime) {
                         .format = TextureFormat::RGBA16F
                 };
                 data.output = builder.createTexture("color buffer", desc);
-                data.rt = builder.createRenderTarget(data.output, TargetBufferFlags::COLOR);
+                data.rt = builder.createRenderTarget("color buffer", {
+                        .attachments = { data.output },
+                        .clearFlags = TargetBufferFlags::COLOR });
+
                 EXPECT_TRUE(fg.isValid(data.output));
             },
             [=, &rt1, &renderPassExecuted1](
@@ -358,7 +382,7 @@ TEST(FrameGraphTest, RenderTargetLifetime) {
                     RenderPassData const& data,
                     DriverApi& driver) {
                 renderPassExecuted1 = true;
-                auto const& rt = resources.getRenderTarget(data.rt);
+                auto const& rt = resources.get(data.rt);
                 rt1 = rt.target;
                 EXPECT_TRUE(rt.target);
                 EXPECT_EQ(TargetBufferFlags::COLOR, rt.params.flags.clear);
@@ -369,7 +393,9 @@ TEST(FrameGraphTest, RenderTargetLifetime) {
     auto& renderPass2 = fg.addPass<RenderPassData>("Render2",
             [&](FrameGraph::Builder& builder, RenderPassData& data) {
                 data.output = builder.write(builder.read(renderPass1.getData().output));
-                data.rt = builder.createRenderTarget(data.output, TargetBufferFlags::NONE);
+                data.rt = builder.createRenderTarget("rt2", {
+                        .attachments = { data.output },
+                        .clearFlags = TargetBufferFlags::NONE });
                 EXPECT_TRUE(fg.isValid(data.output));
             },
             [=, &rt1, &renderPassExecuted2](
@@ -377,7 +403,7 @@ TEST(FrameGraphTest, RenderTargetLifetime) {
                     RenderPassData const& data,
                     DriverApi& driver) {
                 renderPassExecuted2 = true;
-                auto const& rt = resources.getRenderTarget(data.rt);
+                auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
                 EXPECT_EQ(TargetBufferFlags::NONE, rt.params.flags.clear);
                 EXPECT_EQ(rt1.getId(), rt.target.getId());

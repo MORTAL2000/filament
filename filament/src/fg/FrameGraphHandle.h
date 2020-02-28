@@ -30,8 +30,7 @@ namespace filament {
 
 namespace fg {
 struct PassNode;
-struct RenderTarget;
-struct RenderTargetResource;
+class RenderTargetResourceEntry;
 } // namespace fg
 
 class Blackboard;
@@ -70,8 +69,7 @@ class FrameGraphHandle {
     friend class FrameGraph;
     friend class FrameGraphPassResources;
     friend struct fg::PassNode;
-    friend struct fg::RenderTarget;
-    friend struct fg::RenderTargetResource;
+    friend class fg::RenderTargetResourceEntry;
 
     // private ctor -- this cannot be constructed by users
     FrameGraphHandle() noexcept = default;
@@ -141,6 +139,7 @@ struct FrameGraphRenderTarget {
         };
 
         constexpr Attachments() noexcept : textures{} {}
+        Attachments(AttachmentInfo c) noexcept : color(c) {}
         Attachments(AttachmentInfo c, AttachmentInfo d) noexcept : color(c), depth(d) {}
 
         enum { COLOR = 0, DEPTH = 1 };
@@ -163,6 +162,10 @@ struct FrameGraphRenderTarget {
 
     backend::Handle<backend::HwRenderTarget> target;
     backend::RenderPassParams params;
+
+    // these are empty because we have custom overrides for rendertargets
+    void create(FrameGraph& fg, const char* name, Descriptor const& desc) noexcept {}
+    void destroy(FrameGraph& fg) noexcept {}
 };
 
 using FrameGraphRenderTargetHandle = FrameGraphId<FrameGraphRenderTarget>;

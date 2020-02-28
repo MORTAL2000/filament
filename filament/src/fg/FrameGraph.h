@@ -52,7 +52,6 @@ class FEngine;
 
 namespace fg {
 struct ResourceNode;
-struct RenderTarget;
 struct PassNode;
 struct Alias;
 class ResourceAllocatorInterface;
@@ -205,7 +204,7 @@ public:
     template<typename T>
     FrameGraphId<T> import(const char* name,
             typename T::Descriptor const& desc, const T& resource) noexcept {
-        fg::ResourceEntryBase* pBase = mArena.make<fg::ResourceEntry<T>>(name, desc, resource, mId++);
+        fg::ResourceEntryBase* pBase = mArena.make<fg::ResourceEntry<T>>(name, desc, resource, mId++, 0);
         return FrameGraphId<T>(create(pBase));
     }
 
@@ -248,8 +247,7 @@ private:
     friend class FrameGraphPassResources;
     friend struct FrameGraphTexture;
     friend struct fg::PassNode;
-    friend struct fg::RenderTarget;
-    friend struct fg::RenderTargetResourceEntry;
+    friend class fg::RenderTargetResourceEntry;
 
     template <typename T>
     struct Deleter {

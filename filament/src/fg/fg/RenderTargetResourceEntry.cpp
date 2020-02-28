@@ -16,160 +16,183 @@
 
 #include "RenderTargetResourceEntry.h"
 
+#include "details/Texture.h"
+
+#include "fg/fg/PassNode.h"
+#include "fg/fg/ResourceNode.h"
+
+#include <fg/FrameGraph.h>
+#include <fg/FrameGraphHandle.h>
+#include <fg/ResourceAllocator.h>
+
+#include <backend/TargetBufferInfo.h>
+
+#include <utils/Panic.h>
+
+#include <vector>
+
 namespace filament {
 
 using namespace backend;
 
 namespace fg {
 
-//targetInfo.params.viewport = desc.viewport;
-//// if Descriptor was initialized with default values, set the viewport to width/height
-//if (targetInfo.params.viewport.width == 0 && targetInfo.params.viewport.height == 0) {
-//targetInfo.params.viewport.width = width;
-//targetInfo.params.viewport.height = height;
-//}
-
 void RenderTargetResourceEntry::resolve(FrameGraph& fg) noexcept {
+    attachments = {};
+    width = 0;
+    height = 0;
+    auto& resource = getResource();
+
+    static constexpr TargetBufferFlags flags[] = {
+            TargetBufferFlags::COLOR,
+            TargetBufferFlags::DEPTH,
+            TargetBufferFlags::STENCIL };
+
+    static constexpr TextureUsage usages[] = {
+            TextureUsage::COLOR_ATTACHMENT,
+            TextureUsage::DEPTH_ATTACHMENT,
+            TextureUsage::STENCIL_ATTACHMENT };
+
+    uint32_t minWidth = std::numeric_limits<uint32_t>::max();
+    uint32_t minHeight = std::numeric_limits<uint32_t>::max();
+    uint32_t maxWidth = 0;
+    uint32_t maxHeight = 0;
+
+    for (size_t i = 0; i < descriptor.attachments.textures.size(); i++) {
+        auto attachment = descriptor.attachments.textures[i];
+        if (attachment.isValid()) {
+            fg::ResourceEntry<FrameGraphTexture>& entry =
+                    fg.getResourceEntryUnchecked(attachment.getHandle());
+            // update usage flags for referenced attachments
+            entry.descriptor.usage |= usages[i];
+
+            // update attachment sample count if not specified and usage permits it
+            if (!entry.descriptor.samples &&
+                none(entry.descriptor.usage & backend::TextureUsage::SAMPLEABLE)) {
+                entry.descriptor.samples = descriptor.samples;
+            }
+
+            attachments |= flags[i];
+
+            // figure out the min/max dimensions across all attachments
+            const size_t level = attachment.getLevel();
+            const uint32_t w = details::FTexture::valueForLevel(level, entry.descriptor.width);
+            const uint32_t h = details::FTexture::valueForLevel(level, entry.descriptor.height);
+            minWidth = std::min(minWidth, w);
+            maxWidth = std::max(maxWidth, w);
+            minHeight = std::min(minHeight, h);
+            maxHeight = std::max(maxHeight, h);
+        }
+    }
+
+    if (any(attachments)) {
+        if (minWidth == maxWidth && minHeight == maxHeight) {
+            // All attachments' size match, we're good to go.
+            width = minWidth;
+            height = minHeight;
+        } else {
+            // TODO: what should we do here? Is it a user-error?
+            width = maxWidth;
+            height = maxHeight;
+        }
+
+        if (resource.params.viewport.width == 0 && resource.params.viewport.height == 0) {
+            resource.params.viewport.width = width;
+            resource.params.viewport.height = height;
+        }
+    }
+}
+
+void RenderTargetResourceEntry::update(FrameGraph& fg, PassNode const& pass) noexcept {
+    auto& resource = getResource();
+
+    // this update at every pass
+    if (any(attachments)) {
+        // overwrite discard flags with the per-rendertarget (per-pass) computed value
+        resource.params.flags.discardStart = TargetBufferFlags::NONE;
+        resource.params.flags.discardEnd   = TargetBufferFlags::NONE;
+        // FIXME
+        //resource.params.flags.clear        = renderTarget.userClearFlags;
+
+        static constexpr TargetBufferFlags flags[] = {
+                TargetBufferFlags::COLOR,
+                TargetBufferFlags::DEPTH,
+                TargetBufferFlags::STENCIL };
+
+        auto& resourceNodes = fg.mResourceNodes;
+        for (size_t i = 0; i < descriptor.attachments.textures.size(); i++) {
+            FrameGraphHandle attachment = descriptor.attachments.textures[i];
+            if (attachment.isValid()) {
+                if (resourceNodes[attachment.index].resource->discardStart) {
+                    resource.params.flags.discardStart |= flags[i];
+                }
+                if (resourceNodes[attachment.index].resource->discardEnd) {
+                    resource.params.flags.discardEnd |= flags[i];
+                }
+            }
+        }
+
+// FIXME
+//        // clear implies discarding the content of the buffer
+//        resource.params.flags.discardStart |= (renderTarget.userClearFlags & TargetBufferFlags::ALL);
+//        if (imported) {
+//            // we never discard more than the user flags
+//            resource.params.flags.discardStart &= disrenderTarget.cache->discardStart;
+//            resource.params.flags.discardEnd   &= renderTarget.cache->discardEnd;
+//        }
+
+        // check that this FrameGraphRenderTarget is indeed declared by this pass
+        ASSERT_POSTCONDITION_NON_FATAL(resource.target,
+                "Pass \"%s\" doesn't declare rendertarget \"%s\" -- expect graphic corruptions",
+                pass.name, name);
+    }
 }
 
 void RenderTargetResourceEntry::preExecuteDevirtualize(FrameGraph& fg) noexcept {
     if (!imported) {
-        if (any(attachments)) {
-            // devirtualize our texture handles. By this point these handles have been
-            // remapped to their alias if any.
-            backend::TargetBufferInfo infos[FrameGraphRenderTarget::Attachments::COUNT];
-            for (size_t i = 0, c = desc.attachments.textures.size(); i < c; i++) {
+        assert(any(attachments));
 
-                auto const& attachmentInfo = desc.attachments.textures[i];
-
+        // TODO: we could cache the result of this loop
+        backend::TargetBufferInfo infos[FrameGraphRenderTarget::Attachments::COUNT];
+        for (size_t i = 0, c = descriptor.attachments.textures.size(); i < c; i++) {
+            auto const& attachmentInfo = descriptor.attachments.textures[i];
 #ifndef NDEBUG
-                static constexpr TargetBufferFlags flags[] = {
-                        TargetBufferFlags::COLOR,
-                        TargetBufferFlags::DEPTH,
-                        TargetBufferFlags::STENCIL };
-
-                assert(bool(attachments & flags[i]) == attachmentInfo.isValid());
+            static constexpr TargetBufferFlags flags[] = {
+                    TargetBufferFlags::COLOR,
+                    TargetBufferFlags::DEPTH,
+                    TargetBufferFlags::STENCIL };
+            assert(bool(attachments & flags[i]) == attachmentInfo.isValid());
 #endif
-
-                if (attachmentInfo.isValid()) {
-                    fg::ResourceEntry<FrameGraphTexture> const& entry =
-                            fg.getResourceEntryUnchecked(attachmentInfo.getHandle());
-                    infos[i].handle = entry.getResource().texture;
-                    infos[i].level = attachmentInfo.getLevel();
-                    // the attachment buffer (texture or renderbuffer) must be valid
-                    assert(infos[i].handle);
-                    // the attachment level must be within range
-                    assert(infos[i].level < entry.descriptor.levels);
-                    // if the attachment is multisampled, then the rendertarget must be too
-                    assert(entry.descriptor.samples <= 1 || entry.descriptor.samples == desc.samples);
-                }
+            if (attachmentInfo.isValid()) {
+                fg::ResourceEntry<FrameGraphTexture> const& entry =
+                        fg.getResourceEntryUnchecked(attachmentInfo.getHandle());
+                infos[i].handle = entry.getResource().texture;
+                infos[i].level = attachmentInfo.getLevel();
+                // the attachment buffer (texture or renderbuffer) must be valid
+                assert(infos[i].handle);
+                // the attachment level must be within range
+                assert(infos[i].level < entry.descriptor.levels);
+                // if the attachment is multisampled, then the rendertarget must be too
+                assert(entry.descriptor.samples <= 1 || entry.descriptor.samples == descriptor.samples);
             }
-            targetInfo.target = fg.getResourceAllocator().createRenderTarget(name,
-                    attachments, width, height, desc.samples,
-                    infos[0], infos[1], {});
         }
+
+        auto& resource = getResource();
+        resource.target = fg.getResourceAllocator().createRenderTarget(name,
+                attachments, width, height, descriptor.samples, infos[0], infos[1], {});
     }
 
-    ResourceEntry::preExecuteDevirtualize(fg);
 }
 
 void RenderTargetResourceEntry::postExecuteDestroy(FrameGraph& fg) noexcept {
     if (!imported) {
-        if (targetInfo.target) {
-            fg.getResourceAllocator().destroyRenderTarget(targetInfo.target);
-            targetInfo.target.clear();
+        auto& resource = getResource();
+        if (resource.target) {
+            fg.getResourceAllocator().destroyRenderTarget(resource.target);
+            resource.target.clear();
         }
     }
-
-    ResourceEntry::postExecuteDestroy(fg);
 }
-
 
 } // namespace fg
 } // namespace filament
-
-
-//
-//void RenderTarget::resolve(FrameGraph& fg) noexcept {
-//    auto& renderTargetCache = fg.mRenderTargetCache;
-//
-//    // find a matching rendertarget
-//    auto pos = std::find_if(renderTargetCache.begin(), renderTargetCache.end(),
-//            [this, &fg](auto const& rt) {
-//                return fg.equals(rt->desc, desc);
-//            });
-//
-//    if (pos != renderTargetCache.end()) {
-//        cache = pos->get();
-//    } else {
-//        TargetBufferFlags attachments{};
-//        uint32_t width = 0;
-//        uint32_t height = 0;
-//        backend::TextureFormat colorFormat = {};
-//
-//        static constexpr TargetBufferFlags flags[] = {
-//                TargetBufferFlags::COLOR,
-//                TargetBufferFlags::DEPTH,
-//                TargetBufferFlags::STENCIL };
-//
-//        static constexpr TextureUsage usages[] = {
-//                TextureUsage::COLOR_ATTACHMENT,
-//                TextureUsage::DEPTH_ATTACHMENT,
-//                TextureUsage::STENCIL_ATTACHMENT };
-//
-//        uint32_t minWidth = std::numeric_limits<uint32_t>::max();
-//        uint32_t maxWidth = 0;
-//        uint32_t minHeight = std::numeric_limits<uint32_t>::max();
-//        uint32_t maxHeight = 0;
-//
-//        for (size_t i = 0; i < desc.attachments.textures.size(); i++) {
-//            FrameGraphRenderTarget::Attachments::AttachmentInfo attachment = desc.attachments.textures[i];
-//            if (attachment.isValid()) {
-//                fg::ResourceEntry<FrameGraphTexture>& entry =
-//                        fg.getResourceEntryUnchecked(attachment.getHandle());
-//                // update usage flags for referenced attachments
-//                entry.descriptor.usage |= usages[i];
-//
-//                // update attachment sample count if not specified and usage permits it
-//                if (!entry.descriptor.samples &&
-//                    none(entry.descriptor.usage & backend::TextureUsage::SAMPLEABLE)) {
-//                    entry.descriptor.samples = desc.samples;
-//                }
-//
-//                attachments |= flags[i];
-//
-//                // figure out the min/max dimensions across all attachments
-//                const size_t level = attachment.getLevel();
-//                const uint32_t w = details::FTexture::valueForLevel(level, entry.descriptor.width);
-//                const uint32_t h = details::FTexture::valueForLevel(level, entry.descriptor.height);
-//                minWidth  = std::min(minWidth,  w);
-//                maxWidth  = std::max(maxWidth,  w);
-//                minHeight = std::min(minHeight, h);
-//                maxHeight = std::max(maxHeight, h);
-//
-//                if (i == FrameGraphRenderTarget::Attachments::COLOR) {
-//                    colorFormat = entry.descriptor.format;
-//                }
-//            }
-//        }
-//
-//        if (any(attachments)) {
-//            if (minWidth == maxWidth && minHeight == maxHeight) {
-//                // All attachments' size match, we're good to go.
-//                width = minWidth;
-//                height = minHeight;
-//            } else {
-//                // TODO: what should we do here? Is it a user-error?
-//                width = maxWidth;
-//                height = maxHeight;
-//            }
-//
-//            // create the cache entry
-//            RenderTargetResource* pRenderTargetResource =
-//                    fg.mArena.make<RenderTargetResource>(name, desc, false,
-//                            backend::TargetBufferFlags(attachments), width, height, colorFormat);
-//            renderTargetCache.emplace_back(pRenderTargetResource, fg);
-//            cache = pRenderTargetResource;
-//        }
-//    }
-//}

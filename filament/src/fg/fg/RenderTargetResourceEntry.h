@@ -21,6 +21,8 @@
 
 #include <fg/FrameGraphHandle.h>
 
+#include <backend/TargetBufferInfo.h>
+
 namespace filament {
 
 class FrameGraph;
@@ -32,16 +34,15 @@ public:
     using ResourceEntry<FrameGraphRenderTarget>::ResourceEntry;
 
 private:
-    // render target creation info
-//    backend::TargetBufferFlags attachments;
-//    uint32_t width;
-//    uint32_t height;
-//    backend::TargetBufferFlags discardStart = backend::TargetBufferFlags::NONE;
-//    backend::TargetBufferFlags discardEnd = backend::TargetBufferFlags::NONE;
-
-    void resolve(FrameGraph& fg) noexcept;
+    void resolve(FrameGraph& fg) noexcept override;
+    void update(FrameGraph& fg, PassNode const& pass) noexcept override;
     void preExecuteDevirtualize(FrameGraph& fg) noexcept override;
     void postExecuteDestroy(FrameGraph& fg) noexcept override;
+
+    // render target creation info
+    uint32_t width;
+    uint32_t height;
+    backend::TargetBufferFlags attachments;
 };
 
 } // namespace fg

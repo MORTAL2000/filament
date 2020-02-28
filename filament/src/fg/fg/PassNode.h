@@ -18,6 +18,7 @@
 #define TNT_FILAMENT_FG_PASSNODE_H
 
 #include "fg/FrameGraph.h"
+#include "fg/fg/ResourceNode.h"
 
 #include <vector>
 

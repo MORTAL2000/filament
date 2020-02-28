@@ -19,9 +19,7 @@
 #include "FrameGraphPassResources.h"
 #include "FrameGraphHandle.h"
 
-#include "fg/RenderTargetResource.h"
 #include "fg/ResourceNode.h"
-#include "fg/RenderTarget.h"
 #include "fg/PassNode.h"
 #include "fg/VirtualResource.h"
 
@@ -109,8 +107,7 @@ FrameGraph::FrameGraph(fg::ResourceAllocatorInterface& resourceAllocator)
 //    slog.d << "PassNode: " << sizeof(PassNode) << io::endl;
 //    slog.d << "ResourceNode: " << sizeof(ResourceNode) << io::endl;
 //    slog.d << "Resource: " << sizeof(Resource) << io::endl;
-//    slog.d << "RenderTarget: " << sizeof(fg::RenderTarget) << io::endl;
-//    slog.d << "RenderTargetResource: " << sizeof(RenderTargetResource) << io::endl;
+//    slog.d << "RenderTargetResourceEntry: " << sizeof(RenderTargetResourceEntry) << io::endl;
 //    slog.d << "Alias: " << sizeof(Alias) << io::endl;
 //    slog.d << "Vector: " << sizeof(Vector<fg::PassNode>) << io::endl;
 }
@@ -359,16 +356,6 @@ FrameGraph& FrameGraph::compile() noexcept {
         node.resource->refs += node.readerCount;
     }
 
-    // update the SAMPLEABLE bit, now that we culled unneeded passes
-    for (PassNode& pass : passNodes) {
-        if (pass.refCount) {
-            for (auto handle : pass.samples) {
-                auto& texture = getResourceEntryUnchecked(handle);
-                texture.descriptor.usage |= backend::TextureUsage::SAMPLEABLE;
-            }
-        }
-    }
-
     /*
      * compute first/last users for active passes
      */
@@ -401,6 +388,22 @@ FrameGraph& FrameGraph::compile() noexcept {
         }
     }
 
+    // update the SAMPLEABLE bit, now that we culled unneeded passes
+    for (PassNode& pass : passNodes) {
+        if (pass.refCount) {
+            for (auto handle : pass.samples) {
+                auto& texture = getResourceEntryUnchecked(handle);
+                texture.descriptor.usage |= backend::TextureUsage::SAMPLEABLE;
+            }
+        }
+    }
+
+    for (UniquePtr<fg::ResourceEntryBase> const& resource : resourceRegistry) {
+        if (resource->refs) {
+            resource->resolve(*this);
+        }
+    }
+
     // add resource to de-virtualize or destroy to the corresponding list for each active pass
     // but add them in priority order (this is so that rendertargets are added after textures)
     for (size_t priority = 0; priority < 2; priority++) {
@@ -426,6 +429,9 @@ void FrameGraph::executeInternal(PassNode const& node, DriverApi& driver) noexce
     }
     for (VirtualResource* resource : node.destroy) {
         resource->preExecuteDestroy(*this);
+    }
+    for (VirtualResource* resource : node.destroy) {
+        resource->update(*this, node);
     }
 
     // execute the pass
@@ -566,7 +572,6 @@ void FrameGraph::export_graphviz(utils::io::ostream& out) {
 }
 
 // avoid creating a .o just for these
-fg::RenderTargetResource::~RenderTargetResource() = default;
 FrameGraphPassExecutor::FrameGraphPassExecutor() = default;
 FrameGraphPassExecutor::~FrameGraphPassExecutor() = default;
 
