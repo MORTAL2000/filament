@@ -53,8 +53,7 @@ TEST(FrameGraphTest, SimpleRenderPass) {
                 data.rt = builder.createRenderTarget("color buffer", {
                     .attachments = { data.output } });
 
-                data.rt = builder.read(data.rt);    // this shouldn't be needed
-                data.rt = builder.write(data.rt);
+                data.rt = builder.use(data.rt);
 
                 // rendertargets are weird...
                 // A) reading from an attachment is equivalent to reading from the RT
@@ -71,8 +70,8 @@ TEST(FrameGraphTest, SimpleRenderPass) {
                 EXPECT_TRUE(fg.isValid(data.output));
                 EXPECT_TRUE(fg.isValid(data.rt));
             },
-            [=, &renderPassExecuted](
-                    FrameGraphPassResources const& resources, auto const& data, DriverApi& driver) {
+            [=, &renderPassExecuted](FrameGraphPassResources const& resources,
+                    auto const& data, DriverApi& driver) {
                 renderPassExecuted = true;
                 auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
@@ -103,28 +102,24 @@ TEST(FrameGraphTest, SimpleRenderPass2) {
     };
 
     auto& renderPass = fg.addPass<RenderPassData>("Render",
-            [&](FrameGraph::Builder& builder, RenderPassData& data) {
-                FrameGraphTexture::Descriptor inputDesc{};
-                inputDesc.format = TextureFormat::RGBA16F;
-                data.outColor = builder.createTexture("color buffer", inputDesc);
-                inputDesc.format = TextureFormat::DEPTH24;
-                data.outDepth = builder.createTexture("depth buffer", inputDesc);
-
-
+            [&](FrameGraph::Builder& builder, auto& data) {
+                data.outColor = builder.createTexture("color buffer",
+                        { .format = TextureFormat::RGBA16F });
+                data.outDepth = builder.createTexture("depth buffer",
+                        { .format = TextureFormat::DEPTH24 });
                 data.outColor = builder.write(builder.read(data.outColor));
                 data.outDepth = builder.write(builder.read(data.outDepth));
-                FrameGraphRenderTarget::Descriptor renderTargetDescr;
-                renderTargetDescr.attachments.color = data.outColor;
-                renderTargetDescr.attachments.depth = data.outDepth;
-                data.rt = builder.createRenderTarget("rt", renderTargetDescr);
+                data.rt = builder.createRenderTarget("rt", {
+                        .attachments = { data.outColor, data.outDepth }
+                });
+                data.rt = builder.use(data.rt);
 
                 EXPECT_TRUE(fg.isValid(data.outColor));
                 EXPECT_TRUE(fg.isValid(data.outDepth));
+                EXPECT_TRUE(fg.isValid(data.rt));
             },
-            [=, &renderPassExecuted](
-                    FrameGraphPassResources const& resources,
-                    RenderPassData const& data,
-                    DriverApi& driver) {
+            [=, &renderPassExecuted](FrameGraphPassResources const& resources,
+                    auto const& data, DriverApi& driver) {
                 renderPassExecuted = true;
                 auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
@@ -156,20 +151,19 @@ TEST(FrameGraphTest, ScenarioDepthPrePass) {
     };
 
     auto& depthPrepass = fg.addPass<DepthPrepassData>("depth prepass",
-            [&](FrameGraph::Builder& builder, DepthPrepassData& data) {
-                FrameGraphTexture::Descriptor inputDesc{};
-                inputDesc.format = TextureFormat::DEPTH24;
-                data.outDepth = builder.createTexture("depth buffer", inputDesc);
+            [&](FrameGraph::Builder& builder, auto& data) {
+                data.outDepth = builder.createTexture("depth buffer",
+                        { .format = TextureFormat::DEPTH24 });
                 data.outDepth = builder.write(builder.read(data.outDepth));
-                FrameGraphRenderTarget::Descriptor renderTargetDescr;
-                renderTargetDescr.attachments.depth = data.outDepth;
-                data.rt = builder.createRenderTarget("rt depth", renderTargetDescr);
+                data.rt = builder.createRenderTarget("rt depth", {
+                        .attachments = {{}, data.outDepth }
+                });
+                data.rt = builder.use(data.rt);
                 EXPECT_TRUE(fg.isValid(data.outDepth));
+                EXPECT_TRUE(fg.isValid(data.rt));
             },
-            [=, &depthPrepassExecuted](
-                    FrameGraphPassResources const& resources,
-                    DepthPrepassData const& data,
-                    DriverApi& driver) {
+            [=, &depthPrepassExecuted](FrameGraphPassResources const& resources,
+                    auto const& data, DriverApi& driver) {
                 depthPrepassExecuted = true;
                 auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
@@ -184,29 +178,26 @@ TEST(FrameGraphTest, ScenarioDepthPrePass) {
     };
 
     auto& colorPass = fg.addPass<ColorPassData>("color pass",
-            [&](FrameGraph::Builder& builder, ColorPassData& data) {
-                FrameGraphTexture::Descriptor inputDesc{};
-                inputDesc.format = TextureFormat::RGBA16F;
-                data.outColor = builder.createTexture("color buffer", inputDesc);
+            [&](FrameGraph::Builder& builder, auto& data) {
+                data.outColor = builder.createTexture("color buffer",
+                        { .format = TextureFormat::RGBA16F });
 
                 // declare a read here, so a reference is added to the previous pass
                 data.outDepth = depthPrepass.getData().outDepth;
-
                 data.outColor = builder.write(builder.read(data.outColor));
                 data.outDepth = builder.write(builder.read(data.outDepth));
-                FrameGraphRenderTarget::Descriptor renderTargetDescr;
-                renderTargetDescr.attachments.color = data.outColor;
-                renderTargetDescr.attachments.depth = data.outDepth;
-                data.rt = builder.createRenderTarget("rt color+depth", renderTargetDescr);
+                data.rt = builder.createRenderTarget("rt color+depth", {
+                        .attachments = { data.outColor, data.outDepth }
+                });
+                data.rt = builder.use(data.rt);
 
                 EXPECT_FALSE(fg.isValid(depthPrepass.getData().outDepth));
                 EXPECT_TRUE(fg.isValid(data.outColor));
                 EXPECT_TRUE(fg.isValid(data.outDepth));
+                EXPECT_TRUE(fg.isValid(data.rt));
             },
-            [=, &colorPassExecuted](
-                    FrameGraphPassResources const& resources,
-                    ColorPassData const& data,
-                    DriverApi& driver) {
+            [=, &colorPassExecuted](FrameGraphPassResources const& resources,
+                    auto const& data, DriverApi& driver) {
                 colorPassExecuted = true;
                 auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
@@ -239,16 +230,18 @@ TEST(FrameGraphTest, SimplePassCulling) {
     };
 
     auto& renderPass = fg.addPass<RenderPassData>("Render",
-            [&](FrameGraph::Builder& builder, RenderPassData& data) {
+            [&](FrameGraph::Builder& builder, auto& data) {
                 data.output = builder.createTexture("renderTarget");
+                data.output = builder.write(data.output);
                 data.rt = builder.createRenderTarget("renderTarget", {
                         .attachments = { data.output }
                 });
+                data.rt = builder.use(data.rt);
+                EXPECT_TRUE(fg.isValid(data.output));
+                EXPECT_TRUE(fg.isValid(data.rt));
             },
-            [=, &renderPassExecuted](
-                    FrameGraphPassResources const& resources,
-                    RenderPassData const& data,
-                    backend::DriverApi& driver) {
+            [=, &renderPassExecuted](FrameGraphPassResources const& resources,
+                    auto const& data, backend::DriverApi& driver) {
                 renderPassExecuted = true;
                 auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
@@ -264,17 +257,20 @@ TEST(FrameGraphTest, SimplePassCulling) {
     };
 
     auto& postProcessPass = fg.addPass<PostProcessPassData>("PostProcess",
-            [&](FrameGraph::Builder& builder, PostProcessPassData& data) {
+            [&](FrameGraph::Builder& builder, auto& data) {
                 data.input = builder.sample(renderPass.getData().output);
                 data.output = builder.createTexture("postprocess-renderTarget");
+                data.output = builder.write(data.output);
                 data.rt = builder.createRenderTarget("postprocess-renderTarget",{
                     .attachments = { data.output }
                 });
+                data.rt = builder.use(data.rt);
+                EXPECT_TRUE(fg.isValid(data.input));
+                EXPECT_TRUE(fg.isValid(data.output));
+                EXPECT_TRUE(fg.isValid(data.rt));
             },
-            [=, &postProcessPassExecuted](
-                    FrameGraphPassResources const& resources,
-                    PostProcessPassData const& data,
-                    backend::DriverApi& driver) {
+            [=, &postProcessPassExecuted](FrameGraphPassResources const& resources,
+                    auto const& data, backend::DriverApi& driver) {
                 postProcessPassExecuted = true;
                 auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);
@@ -290,17 +286,20 @@ TEST(FrameGraphTest, SimplePassCulling) {
     };
 
     auto& culledPass = fg.addPass<CulledPassData>("CulledPass",
-            [&](FrameGraph::Builder& builder, CulledPassData& data) {
+            [&](FrameGraph::Builder& builder, auto& data) {
                 data.input = builder.sample(renderPass.getData().output);
                 data.output = builder.createTexture("unused-rendertarget");
+                data.output = builder.write(data.output);
                 data.rt = builder.createRenderTarget("unused-rendertarget", {
                         .attachments = { data.output }
                 });
+                data.rt = builder.use(data.rt);
+                EXPECT_TRUE(fg.isValid(data.input));
+                EXPECT_TRUE(fg.isValid(data.output));
+                EXPECT_TRUE(fg.isValid(data.rt));
             },
-            [=, &culledPassExecuted](
-                    FrameGraphPassResources const& resources,
-                    CulledPassData const& data,
-                    backend::DriverApi& driver) {
+            [=, &culledPassExecuted](FrameGraphPassResources const& resources,
+                    auto const& data, backend::DriverApi& driver) {
                 culledPassExecuted = true;
             });
 
@@ -366,21 +365,21 @@ TEST(FrameGraphTest, RenderTargetLifetime) {
     };
 
     auto& renderPass1 = fg.addPass<RenderPassData>("Render1",
-            [&](FrameGraph::Builder& builder, RenderPassData& data) {
-                FrameGraphTexture::Descriptor desc{
-                        .format = TextureFormat::RGBA16F
-                };
-                data.output = builder.createTexture("color buffer", desc);
-                data.rt = builder.createRenderTarget("color buffer", {
+            [&](FrameGraph::Builder& builder, auto& data) {
+                data.output = builder.createTexture("color texture",
+                        { .format = TextureFormat::RGBA16F });
+                data.output = builder.write(data.output);
+                data.rt = builder.createRenderTarget("color target", {
                         .attachments = { data.output },
-                        .clearFlags = TargetBufferFlags::COLOR });
+                        .clearFlags = TargetBufferFlags::COLOR
+                });
+                data.rt = builder.use(data.rt);
 
                 EXPECT_TRUE(fg.isValid(data.output));
+                EXPECT_TRUE(fg.isValid(data.rt));
             },
-            [=, &rt1, &renderPassExecuted1](
-                    FrameGraphPassResources const& resources,
-                    RenderPassData const& data,
-                    DriverApi& driver) {
+            [=, &rt1, &renderPassExecuted1](FrameGraphPassResources const& resources,
+                    auto const& data, DriverApi& driver) {
                 renderPassExecuted1 = true;
                 auto const& rt = resources.get(data.rt);
                 rt1 = rt.target;
@@ -391,17 +390,14 @@ TEST(FrameGraphTest, RenderTargetLifetime) {
             });
 
     auto& renderPass2 = fg.addPass<RenderPassData>("Render2",
-            [&](FrameGraph::Builder& builder, RenderPassData& data) {
+            [&](FrameGraph::Builder& builder, auto& data) {
                 data.output = builder.write(builder.read(renderPass1.getData().output));
-                data.rt = builder.createRenderTarget("rt2", {
-                        .attachments = { data.output },
-                        .clearFlags = TargetBufferFlags::NONE });
+                data.rt = builder.use(renderPass1.getData().rt);
                 EXPECT_TRUE(fg.isValid(data.output));
+                EXPECT_TRUE(fg.isValid(data.rt));
             },
-            [=, &rt1, &renderPassExecuted2](
-                    FrameGraphPassResources const& resources,
-                    RenderPassData const& data,
-                    DriverApi& driver) {
+            [=, &rt1, &renderPassExecuted2](FrameGraphPassResources const& resources,
+                    auto const& data, DriverApi& driver) {
                 renderPassExecuted2 = true;
                 auto const& rt = resources.get(data.rt);
                 EXPECT_TRUE(rt.target);

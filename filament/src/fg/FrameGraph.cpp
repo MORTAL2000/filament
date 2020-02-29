@@ -73,21 +73,26 @@ bool FrameGraph::Builder::isAttachment(FrameGraphId<FrameGraphTexture> r) const 
 template<>
 FrameGraphId<FrameGraphRenderTarget> FrameGraph::Builder::create(const char* name,
         FrameGraphRenderTarget::Descriptor const& desc) noexcept {
-    auto handle =  mFrameGraph.create<FrameGraphRenderTarget>(name, desc);
-    mPass.declareRenderTarget(mFrameGraph, handle); // FIXME: this should be explicit
-    return handle;
+    return mFrameGraph.create<FrameGraphRenderTarget>(name, desc);
 }
 
 FrameGraphHandle FrameGraph::Builder::read(FrameGraphHandle input) {
     return mPass.read(mFrameGraph, input);
 }
 
+FrameGraphHandle FrameGraph::Builder::write(FrameGraphHandle output) {
+    return mPass.write(mFrameGraph, output);
+}
+
 FrameGraphId<FrameGraphTexture> FrameGraph::Builder::sample(FrameGraphId<FrameGraphTexture> input) {
     return mPass.sample(mFrameGraph, input);
 }
 
-FrameGraphHandle FrameGraph::Builder::write(FrameGraphHandle output) {
-    return mPass.write(mFrameGraph, output);
+FrameGraphId<FrameGraphRenderTarget> FrameGraph::Builder::use(FrameGraphId<FrameGraphRenderTarget> input) {
+    // TODO: use() should take a clearFlags otherwise you can't effectively reuse a RT
+    mPass.declareRenderTarget(mFrameGraph, input);
+    read(input);
+    return input;
 }
 
 FrameGraph::Builder& FrameGraph::Builder::sideEffect() noexcept {
@@ -175,20 +180,16 @@ FrameGraphHandle FrameGraph::create(fg::ResourceEntryBase* pResourceEntry) noexc
 }
 
 ResourceNode& FrameGraph::getResourceNodeUnchecked(FrameGraphHandle r) {
-    ASSERT_POSTCONDITION(r.isValid(), "using an uninitialized resource handle");
-
     auto& resourceNodes = mResourceNodes;
     assert(r.index < resourceNodes.size());
-
     ResourceNode& node = resourceNodes[r.index];
     assert(node.resource);
-
     return node;
 }
 
 ResourceNode& FrameGraph::getResourceNode(FrameGraphHandle r) {
+    ASSERT_POSTCONDITION(r.isValid(), "using an uninitialized resource handle");
     ResourceNode& node = getResourceNodeUnchecked(r);
-
     ASSERT_POSTCONDITION(node.resource->version == node.version,
             "using an invalid resource handle (version=%u) for resource=\"%s\" (id=%u, version=%u)",
             node.resource->version, node.resource->name, node.resource->id, node.version);
@@ -206,46 +207,6 @@ fg::ResourceEntryBase& FrameGraph::getResourceEntryBaseUnchecked(FrameGraphHandl
     ResourceNode& node = getResourceNodeUnchecked(r);
     assert(node.resource);
     return *node.resource;
-}
-
-bool FrameGraph::equals(FrameGraphRenderTarget::Descriptor const& cacheEntry,
-        FrameGraphRenderTarget::Descriptor const& rt) const noexcept {
-    const Vector<ResourceNode>& resourceNodes = mResourceNodes;
-
-    // if the rendertarget we're looking up doesn't have the sample field set to 0, it means the
-    // user didn't specify it, and it's okay to match it to any sample count.
-    // Otherwise, sample count must match, with the caveat that 0 or 1 are treated the same.
-    const bool samplesMatch = (!rt.samples) ||
-            (std::max<uint8_t>(1u, cacheEntry.samples) == std::max<uint8_t>(1u, rt.samples));
-
-    return std::equal(
-            cacheEntry.attachments.textures.begin(), cacheEntry.attachments.textures.end(),
-            rt.attachments.textures.begin(), rt.attachments.textures.end(),
-            [&resourceNodes](
-                    FrameGraphRenderTarget::Attachments::AttachmentInfo lhs,
-                    FrameGraphRenderTarget::Attachments::AttachmentInfo rhs) {
-                // both resource must be the same level to match
-                if (lhs.getLevel() != rhs.getLevel()) {
-                    return false;
-                }
-                const FrameGraphHandle lHandle = lhs.getHandle();
-                const FrameGraphHandle rHandle = rhs.getHandle();
-                if (lHandle == rHandle) {
-                    // obviously resources match if they're the same
-                    return true;
-                }
-                if (lHandle.isValid() && rHandle.isValid()) {
-                    if (resourceNodes[lHandle.index].resource == resourceNodes[rHandle.index].resource) {
-                        // they also match if they're the same concrete resource
-                        return true;
-                    }
-                }
-                if (!rHandle.isValid()) {
-                    // it's okay if the cached RT has more attachments than we require
-                    return true;
-                }
-                return false;
-            }) && samplesMatch;
 }
 
 FrameGraph& FrameGraph::compile() noexcept {
@@ -379,13 +340,6 @@ FrameGraph& FrameGraph::compile() noexcept {
             // figure out which is the last pass to need this resource
             pResource->last = &pass;
         }
-        for (FrameGraphHandle resource : pass.renderTargets) {
-            VirtualResource* const pResource = resourceNodes[resource.index].resource;
-            // figure out which is the first pass to need this resource
-            pResource->first = pResource->first ? pResource->first : &pass;
-            // figure out which is the last pass to need this resource
-            pResource->last = &pass;
-        }
     }
 
     // update the SAMPLEABLE bit, now that we culled unneeded passes
@@ -430,8 +384,12 @@ void FrameGraph::executeInternal(PassNode const& node, DriverApi& driver) noexce
     for (VirtualResource* resource : node.destroy) {
         resource->preExecuteDestroy(*this);
     }
-    for (VirtualResource* resource : node.destroy) {
-        resource->update(*this, node);
+
+    // update the RenderTarget discard flags
+    for (auto handle : node.renderTargets) {
+        // here we're guaranteed we have a RenderTargetResourceEntry&
+        auto& entry = getResourceEntryUnchecked<FrameGraphRenderTarget>(handle);
+        static_cast<RenderTargetResourceEntry&>(entry).update(*this, node);
     }
 
     // execute the pass

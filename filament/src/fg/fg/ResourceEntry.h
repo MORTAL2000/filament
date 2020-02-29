@@ -83,7 +83,6 @@ public:
     T& getResource() noexcept { return resource; }
 
     void resolve(FrameGraph& fg) noexcept override { }
-    void update(FrameGraph& fg, PassNode const& pass) noexcept override { }
 
     void preExecuteDevirtualize(FrameGraph& fg) noexcept override {
         if (!imported) {

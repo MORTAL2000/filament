@@ -97,14 +97,18 @@ public:
             return FrameGraphId<T>(read(FrameGraphHandle(input)));
         }
 
-        // Sample from a texture resource (implies read())
-        FrameGraphId<FrameGraphTexture> sample(FrameGraphId<FrameGraphTexture> input);
-
         // Write to a resource (i.e. add a reference to that pass)
         template<typename T>
         [[nodiscard]] FrameGraphId<T> write(FrameGraphId<T> output) {
             return FrameGraphId<T>(write(FrameGraphHandle(output)));
         }
+
+        // Sample from a texture resource (implies read())
+        FrameGraphId<FrameGraphTexture> sample(FrameGraphId<FrameGraphTexture> input);
+
+        // Declare that this FrameGraphRenderTarget will be used in this pass
+        FrameGraphId<FrameGraphRenderTarget> use(FrameGraphId<FrameGraphRenderTarget> input);
+
 
         // Declare that this pass has side effects outside the framegraph (i.e. it can't be culled)
         // Calling write() on an imported resource automatically adds a side-effect.
@@ -265,9 +269,6 @@ private:
     fg::PassNode& createPass(const char* name, FrameGraphPassExecutor* base) noexcept;
 
     FrameGraphHandle createResourceNode(fg::ResourceEntryBase* resource) noexcept;
-
-    bool equals(FrameGraphRenderTarget::Descriptor const& cacheEntry,
-            FrameGraphRenderTarget::Descriptor const& rt) const noexcept;
 
     void executeInternal(fg::PassNode const& node, backend::DriverApi& driver) noexcept;
 
