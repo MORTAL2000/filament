@@ -100,6 +100,7 @@ void RenderTargetResourceEntry::resolve(FrameGraph& fg) noexcept {
             resource.params.viewport.width = width;
             resource.params.viewport.height = height;
         }
+        resource.params.flags.clear = descriptor.clearFlags;
     }
 }
 
@@ -111,8 +112,6 @@ void RenderTargetResourceEntry::update(FrameGraph& fg, PassNode const& pass) noe
         // overwrite discard flags with the per-rendertarget (per-pass) computed value
         resource.params.flags.discardStart = TargetBufferFlags::NONE;
         resource.params.flags.discardEnd   = TargetBufferFlags::NONE;
-        // FIXME
-        //resource.params.flags.clear        = renderTarget.userClearFlags;
 
         static constexpr TargetBufferFlags flags[] = {
                 TargetBufferFlags::COLOR,
@@ -132,9 +131,10 @@ void RenderTargetResourceEntry::update(FrameGraph& fg, PassNode const& pass) noe
             }
         }
 
+        // clear implies discarding the content of the buffer
+        resource.params.flags.discardStart |= resource.params.flags.clear;
+
 // FIXME
-//        // clear implies discarding the content of the buffer
-//        resource.params.flags.discardStart |= (renderTarget.userClearFlags & TargetBufferFlags::ALL);
 //        if (imported) {
 //            // we never discard more than the user flags
 //            resource.params.flags.discardStart &= disrenderTarget.cache->discardStart;
@@ -193,6 +193,14 @@ void RenderTargetResourceEntry::postExecuteDestroy(FrameGraph& fg) noexcept {
         }
     }
 }
+
+void RenderTargetResourceEntry::postExecuteDevirtualize(FrameGraph& fg) noexcept {
+    // after a rendertarget has been used once, it's never cleared anymore
+    // (otherwise it wouldn't be possible to meaningfully reuse it)
+    auto& resource = getResource();
+    resource.params.flags.clear = TargetBufferFlags::NONE;
+}
+
 
 } // namespace fg
 } // namespace filament

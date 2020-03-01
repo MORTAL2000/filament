@@ -128,9 +128,6 @@ public:
             return mFrameGraph.getDescriptor<T>(r);
         }
 
-        // returns whether this texture resource is an attachment to some rendertarget
-        bool isAttachment(FrameGraphId<FrameGraphTexture> r) const noexcept;
-
     private:
         friend class FrameGraph;
         Builder(FrameGraph& fg, fg::PassNode& pass) noexcept;

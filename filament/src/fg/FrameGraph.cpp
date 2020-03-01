@@ -62,14 +62,6 @@ const char* FrameGraph::Builder::getName(FrameGraphHandle const& r) const noexce
     return pResource ? pResource->name : "(invalid)";
 }
 
-bool FrameGraph::Builder::isAttachment(FrameGraphId<FrameGraphTexture> r) const noexcept {
-    fg::ResourceEntry<FrameGraphTexture>& entry = mFrameGraph.getResourceEntryUnchecked(r);
-    return any(entry.descriptor.usage & (
-            TextureUsage::COLOR_ATTACHMENT |
-            TextureUsage::DEPTH_ATTACHMENT |
-            TextureUsage::STENCIL_ATTACHMENT));
-}
-
 template<>
 FrameGraphId<FrameGraphRenderTarget> FrameGraph::Builder::create(const char* name,
         FrameGraphRenderTarget::Descriptor const& desc) noexcept {
@@ -89,10 +81,8 @@ FrameGraphId<FrameGraphTexture> FrameGraph::Builder::sample(FrameGraphId<FrameGr
 }
 
 FrameGraphId<FrameGraphRenderTarget> FrameGraph::Builder::use(FrameGraphId<FrameGraphRenderTarget> input) {
-    // TODO: use() should take a clearFlags otherwise you can't effectively reuse a RT
     mPass.declareRenderTarget(mFrameGraph, input);
-    read(input);
-    return input;
+    return FrameGraphId<FrameGraphRenderTarget>(read(input));
 }
 
 FrameGraph::Builder& FrameGraph::Builder::sideEffect() noexcept {
@@ -363,10 +353,12 @@ FrameGraph& FrameGraph::compile() noexcept {
     for (size_t priority = 0; priority < 2; priority++) {
         for (UniquePtr<fg::ResourceEntryBase> const& resource : resourceRegistry) {
             if (resource->priority == priority && resource->refs) {
-                assert(!resource->first == !resource->last);
-                if (resource->first && resource->last) {
-                    resource->first->devirtualize.push_back(resource.get());
-                    resource->last->destroy.push_back(resource.get());
+                auto pFirst = resource->first;
+                auto pLast = resource->last;
+                assert(!pFirst == !pLast);
+                if (pFirst && pLast) {
+                    pFirst->devirtualize.push_back(resource.get());
+                    pLast->destroy.push_back(resource.get());
                 }
             }
         }

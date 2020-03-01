@@ -40,7 +40,7 @@ private:
     void preExecuteDevirtualize(FrameGraph& fg) noexcept override;
     void postExecuteDestroy(FrameGraph& fg) noexcept override;
     void preExecuteDestroy(FrameGraph& fg) noexcept override { }
-    void postExecuteDevirtualize(FrameGraph& fg) noexcept override { }
+    void postExecuteDevirtualize(FrameGraph& fg) noexcept override;
 
     // render target creation info
     uint32_t width;
