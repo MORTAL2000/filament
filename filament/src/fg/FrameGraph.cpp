@@ -65,7 +65,8 @@ const char* FrameGraph::Builder::getName(FrameGraphHandle const& r) const noexce
 template<>
 FrameGraphId<FrameGraphRenderTarget> FrameGraph::Builder::create(const char* name,
         FrameGraphRenderTarget::Descriptor const& desc) noexcept {
-    return mFrameGraph.create<FrameGraphRenderTarget>(name, desc);
+    auto handle = mFrameGraph.create<FrameGraphRenderTarget>(name, desc);
+    return use(handle);
 }
 
 FrameGraphHandle FrameGraph::Builder::read(FrameGraphHandle input) {
@@ -81,8 +82,7 @@ FrameGraphId<FrameGraphTexture> FrameGraph::Builder::sample(FrameGraphId<FrameGr
 }
 
 FrameGraphId<FrameGraphRenderTarget> FrameGraph::Builder::use(FrameGraphId<FrameGraphRenderTarget> input) {
-    mPass.declareRenderTarget(mFrameGraph, input);
-    return FrameGraphId<FrameGraphRenderTarget>(read(input));
+    return mPass.use(mFrameGraph, input);
 }
 
 FrameGraph::Builder& FrameGraph::Builder::sideEffect() noexcept {
@@ -139,7 +139,7 @@ FrameGraphHandle FrameGraph::createResourceNode(fg::ResourceEntryBase* resource)
     return FrameGraphHandle{ (uint16_t)index };
 }
 
-FrameGraphHandle FrameGraph::moveResource(FrameGraphHandle from, FrameGraphHandle to) {
+FrameGraphHandle FrameGraph::moveResourceBase(FrameGraphHandle from, FrameGraphHandle to) {
     // this is just used to validate the 'to' handle
     getResourceNode(to);
     // validate and rename the 'from' handle
@@ -147,6 +147,68 @@ FrameGraphHandle FrameGraph::moveResource(FrameGraphHandle from, FrameGraphHandl
     ++node.resource->version;
     mAliases.push_back({from, to});
     return createResourceNode(node.resource);
+}
+
+void FrameGraph::moveResource(
+        FrameGraphId<FrameGraphRenderTarget> fromHandle,
+        FrameGraphId<FrameGraphTexture> toHandle) {
+    // 'to' becomes 'from'
+    // all rendertargets that have toHandle as attachment become fromHandle RTs
+
+    // getResourceNode() validates the handles
+    ResourceNode& from = getResourceNode(fromHandle);
+    ResourceNode& to   = getResourceNode(toHandle);
+
+    Vector<fg::PassNode>& passNodes = mPassNodes;
+    Vector<ResourceNode>& resourceNodes = mResourceNodes;
+
+    auto hasAttachment = [&](RenderTargetResourceEntry const* rt, ResourceEntryBase const* r) {
+        for (auto h : rt->descriptor.attachments.textures) {
+            if (h.isValid() && resourceNodes[h.getHandle().index].resource == r) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // find all RenderTargetResource that have 'to' as attachment and replace them with 'from'
+    for (ResourceNode& cur : resourceNodes) {
+        auto p = cur.resource->asRenderTargetResourceEntry();
+        if (p) {
+            if (hasAttachment(p, to.resource)) {
+                // TODO: check that 'from.resource' at least has the same attachments than 'cur.resource' needs
+                cur.resource = from.resource;
+            }
+        }
+    }
+
+    // Passes that were writing to "from node", no longer do (i.e. they're losing a reference)
+    for (PassNode& pass : passNodes) {
+        // passes that were reading from "from node", now read from "to node" as well
+        for (FrameGraphHandle handle : pass.reads) {
+            if (handle == fromHandle) {
+                if (!pass.isReadingFrom(toHandle)) {
+                    pass.reads.push_back(toHandle);
+                }
+                break;
+            }
+        }
+
+        for (FrameGraphHandle handle : pass.samples) {
+            if (handle == fromHandle) {
+                if (!pass.isSamplingFrom(toHandle)) {
+                    pass.samples.push_back(static_cast<FrameGraphId<FrameGraphTexture>>(toHandle));
+                }
+                break;
+            }
+        }
+        pass.writes.erase(
+                std::remove_if(pass.writes.begin(), pass.writes.end(),
+                        [fromHandle](auto handle) { return handle == fromHandle; }),
+                pass.writes.end());
+    }
+
+    // TODO: passes that were reading from "from node", now read from "to node" as well
 }
 
 void FrameGraph::present(FrameGraphHandle input) {

@@ -28,12 +28,17 @@ class FrameGraph;
 namespace fg {
 
 struct PassNode;
+class RenderTargetResourceEntry;
 
 class ResourceEntryBase : public VirtualResource {
 public:
     explicit ResourceEntryBase(const char* name, uint16_t id, bool imported, uint8_t priority) noexcept;
     ResourceEntryBase(ResourceEntryBase const&) = default;
     ~ResourceEntryBase() override;
+
+    virtual RenderTargetResourceEntry* asRenderTargetResourceEntry() noexcept {
+        return nullptr;
+    }
 
     void preExecuteDestroy(FrameGraph& fg) noexcept override {
         discardEnd = true;

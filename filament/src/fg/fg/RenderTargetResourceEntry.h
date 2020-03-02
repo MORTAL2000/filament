@@ -41,6 +41,7 @@ private:
     void postExecuteDestroy(FrameGraph& fg) noexcept override;
     void preExecuteDestroy(FrameGraph& fg) noexcept override { }
     void postExecuteDevirtualize(FrameGraph& fg) noexcept override;
+    RenderTargetResourceEntry* asRenderTargetResourceEntry() noexcept override { return this; }
 
     // render target creation info
     uint32_t width;

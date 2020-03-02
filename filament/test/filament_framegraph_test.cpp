@@ -53,8 +53,6 @@ TEST(FrameGraphTest, SimpleRenderPass) {
                 data.rt = builder.createRenderTarget("color buffer", {
                     .attachments = { data.output } });
 
-                data.rt = builder.use(data.rt);
-
                 // rendertargets are weird...
                 // A) reading from an attachment is equivalent to reading from the RT
                 //    so any reads on any attachment should trigger a read on the RT,
@@ -112,7 +110,6 @@ TEST(FrameGraphTest, SimpleRenderPass2) {
                 data.rt = builder.createRenderTarget("rt", {
                         .attachments = { data.outColor, data.outDepth }
                 });
-                data.rt = builder.use(data.rt);
 
                 EXPECT_TRUE(fg.isValid(data.outColor));
                 EXPECT_TRUE(fg.isValid(data.outDepth));
@@ -158,7 +155,6 @@ TEST(FrameGraphTest, ScenarioDepthPrePass) {
                 data.rt = builder.createRenderTarget("rt depth", {
                         .attachments = {{}, data.outDepth }
                 });
-                data.rt = builder.use(data.rt);
                 EXPECT_TRUE(fg.isValid(data.outDepth));
                 EXPECT_TRUE(fg.isValid(data.rt));
             },
@@ -189,7 +185,6 @@ TEST(FrameGraphTest, ScenarioDepthPrePass) {
                 data.rt = builder.createRenderTarget("rt color+depth", {
                         .attachments = { data.outColor, data.outDepth }
                 });
-                data.rt = builder.use(data.rt);
 
                 EXPECT_FALSE(fg.isValid(depthPrepass.getData().outDepth));
                 EXPECT_TRUE(fg.isValid(data.outColor));
@@ -236,7 +231,6 @@ TEST(FrameGraphTest, SimplePassCulling) {
                 data.rt = builder.createRenderTarget("renderTarget", {
                         .attachments = { data.output }
                 });
-                data.rt = builder.use(data.rt);
                 EXPECT_TRUE(fg.isValid(data.output));
                 EXPECT_TRUE(fg.isValid(data.rt));
             },
@@ -264,7 +258,6 @@ TEST(FrameGraphTest, SimplePassCulling) {
                 data.rt = builder.createRenderTarget("postprocess-renderTarget",{
                     .attachments = { data.output }
                 });
-                data.rt = builder.use(data.rt);
                 EXPECT_TRUE(fg.isValid(data.input));
                 EXPECT_TRUE(fg.isValid(data.output));
                 EXPECT_TRUE(fg.isValid(data.rt));
@@ -293,7 +286,6 @@ TEST(FrameGraphTest, SimplePassCulling) {
                 data.rt = builder.createRenderTarget("unused-rendertarget", {
                         .attachments = { data.output }
                 });
-                data.rt = builder.use(data.rt);
                 EXPECT_TRUE(fg.isValid(data.input));
                 EXPECT_TRUE(fg.isValid(data.output));
                 EXPECT_TRUE(fg.isValid(data.rt));
@@ -373,7 +365,6 @@ TEST(FrameGraphTest, RenderTargetLifetime) {
                         .attachments = { data.output },
                         .clearFlags = TargetBufferFlags::COLOR
                 });
-                data.rt = builder.use(data.rt);
 
                 EXPECT_TRUE(fg.isValid(data.output));
                 EXPECT_TRUE(fg.isValid(data.rt));

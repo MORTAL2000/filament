@@ -200,6 +200,7 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::toneMapping(FrameGraph& fg,
                         .height = inputDesc.height,
                         .format = outFormat
                 });
+                data.output = builder.write(data.output);
                 data.rt = builder.createRenderTarget("ToneMapping Target", {
                         .attachments = { data.output } });
 
@@ -282,6 +283,7 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::fxaa(FrameGraph& fg,
                         .height = inputDesc.height,
                         .format = outFormat
                 });
+                data.output = builder.write(data.output);
                 data.rt = builder.createRenderTarget("FXAA Target", {
                         .attachments = { data.output } });
             },
@@ -346,6 +348,7 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::opaqueBlit(FrameGraph& fg,
                 });
 
                 data.output = builder.createTexture("scaled output", outDesc);
+                data.output = builder.write(data.output);
                 data.drt = builder.createRenderTarget("Scaled Targed", {
                         .attachments = { data.output } });
             },
@@ -377,6 +380,7 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::blendBlit(FrameGraph& fg,
             [&](FrameGraph::Builder& builder, auto& data) {
                 data.input = builder.sample(input);
                 data.output = builder.createTexture("scaled output", outDesc);
+                data.output = builder.write(data.output);
                 data.drt = builder.createRenderTarget("Scaled Target",{
                         .attachments = { data.output } });
             },
@@ -429,10 +433,10 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::resolve(FrameGraph& fg,
                 outputDesc.levels = 1;
                 outputDesc.samples = 0;
                 input = builder.read(input);
-                FrameGraphRenderTarget::Descriptor d;
-                d.attachments.color = { input };
-                data.srt = builder.createRenderTarget(builder.getName(input), d);
+                data.srt = builder.createRenderTarget(builder.getName(input), {
+                        .attachments = { input }});
                 data.output = builder.createTexture(outputBufferName, outputDesc);
+                data.output = builder.write(data.output);
                 data.drt = builder.createRenderTarget(outputBufferName, {
                         .attachments = { data.output } });
             },

@@ -209,6 +209,13 @@ public:
         return FrameGraphId<T>(create(pBase));
     }
 
+    template<>
+    FrameGraphId<FrameGraphRenderTarget> import(const char* name,
+            typename FrameGraphRenderTarget::Descriptor const& desc, const FrameGraphRenderTarget& resource) noexcept {
+        fg::ResourceEntryBase* pBase = mArena.make<fg::RenderTargetResourceEntry>(name, desc, resource, mId++, 1);
+        return FrameGraphId<FrameGraphRenderTarget>(create(pBase));
+    }
+
     // Moves the resource associated to the handle 'from' to the handle 'to'. After this call,
     // all handles referring to the resource 'to' are redirected to the resource 'from'
     // (including handles used in the past).
@@ -217,14 +224,10 @@ public:
     // similar to if we had written to the 'from' resource)
     template<typename T>
     FrameGraphId<T> moveResource(FrameGraphId<T> from, FrameGraphId<T> to) {
-        return FrameGraphId<T>(moveResource(FrameGraphHandle(from), FrameGraphHandle(to)));
+        return FrameGraphId<T>(moveResourceBase(from, to));
     }
 
-    // Helper for aliasing a render target's color attachment
-    template<typename T>
-    FrameGraphId<T> moveResource(FrameGraphRenderTargetHandle from, FrameGraphId<T> to) {
-        return moveResource(getDescriptor(from).attachments.color.getHandle(), to);
-    }
+    void moveResource(FrameGraphId<FrameGraphRenderTarget> from, FrameGraphId<FrameGraphTexture> to);
 
     // allocates concrete resources and culls unreferenced passes
     FrameGraph& compile() noexcept;
@@ -273,6 +276,7 @@ private:
 
     void reset() noexcept;
 
+    FrameGraphHandle moveResourceBase(FrameGraphHandle from, FrameGraphHandle to);
 
     FrameGraphHandle create(fg::ResourceEntryBase* pResourceEntry) noexcept;
 
@@ -286,7 +290,7 @@ private:
     template<>
     FrameGraphId<FrameGraphRenderTarget> create(const char* name,
             typename FrameGraphRenderTarget::Descriptor const& desc) noexcept {
-        fg::ResourceEntryBase* pBase = mArena.make<fg::RenderTargetResourceEntry>(name, desc, mId++, 1);
+        fg::RenderTargetResourceEntry* pBase = mArena.make<fg::RenderTargetResourceEntry>(name, desc, mId++, 1);
         FrameGraphId<FrameGraphRenderTarget> r(create(pBase));
         return r;
     }
@@ -306,8 +310,6 @@ private:
     fg::ResourceEntry<T>& getResourceEntryUnchecked(FrameGraphId<T> r) noexcept {
         return static_cast<fg::ResourceEntry<T>&>(getResourceEntryBaseUnchecked(r));
     }
-
-    FrameGraphHandle moveResource(FrameGraphHandle from, FrameGraphHandle to);
 
     Blackboard mBlackboard;
     fg::ResourceAllocatorInterface& mResourceAllocator;

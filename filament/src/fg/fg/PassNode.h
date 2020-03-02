@@ -50,10 +50,6 @@ struct PassNode { // 200
     ~PassNode() = default;
 
     // for Builder
-    void declareRenderTarget(FrameGraph& fg, FrameGraphId<FrameGraphRenderTarget> handle) noexcept {
-        renderTargets.push_back(handle);
-    }
-
     FrameGraphHandle read(FrameGraph& fg, FrameGraphHandle handle) {
         // don't allow multiple reads of the same resource -- it's just redundant.
         auto pos = std::find_if(reads.begin(), reads.end(),
@@ -66,7 +62,7 @@ struct PassNode { // 200
     }
 
     FrameGraphId<FrameGraphTexture> sample(FrameGraph& fg, FrameGraphId<FrameGraphTexture> handle) {
-        // sample implies a read
+        // sample() implies a read
         read(fg, handle);
 
         // don't allow multiple reads of the same resource -- it's just redundant.
@@ -75,6 +71,20 @@ struct PassNode { // 200
         if (pos == samples.end()) {
             // just record that we're reading from this resource (at the given version)
             samples.push_back(handle);
+        }
+        return handle;
+    }
+
+    FrameGraphId<FrameGraphRenderTarget> use(FrameGraph& fg, FrameGraphId<FrameGraphRenderTarget> handle) noexcept {
+        // use() implies a read
+        read(fg, handle);
+
+        // don't allow multiple use() of the same FrameGraphRenderTarget -- it's just redundant.
+        auto pos = std::find_if(renderTargets.begin(), renderTargets.end(),
+                [&handle](FrameGraphHandle cur) { return handle.index == cur.index; });
+        if (pos == renderTargets.end()) {
+            // just record that we're reading from this resource (at the given version)
+            renderTargets.push_back(handle);
         }
         return handle;
     }
